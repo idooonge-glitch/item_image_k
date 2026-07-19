@@ -1,0 +1,74 @@
+name: Process uploaded screenshot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "uploads/**"
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout item_image_k
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout pipeline code (private)
+        uses: actions/checkout@v4
+        with:
+          repository: idooonge-glitch/coupang-threads-images-manual
+          token: ${{ secrets.GH_PAT }}
+          path: pipeline-code
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Tesseract OCR engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+
+      - name: Download high-accuracy Korean/English tessdata
+        run: |
+          mkdir -p pipeline-code/tessdata
+          curl -sL -o pipeline-code/tessdata/kor.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/kor.traineddata
+          curl -sL -o pipeline-code/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+          curl -sL -o pipeline-code/tessdata/osd.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/osd.traineddata
+
+      - name: Install Python dependencies
+        run: pip install -r pipeline-code/requirements.txt
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Find newly uploaded files
+        id: changed
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            FILES=$(git diff-tree --no-commit-id --name-only -r HEAD -- uploads/ | tr '\n' ' ')
+          else
+            FILES=$(git diff --name-only "$BEFORE" "${{ github.event.after }}" -- uploads/ | tr '\n' ' ')
+          fi
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Process uploads
+        if: steps.changed.outputs.files != ''
+        env:
+          COUPANG_ACCESS_KEY: ${{ secrets.COUPANG_ACCESS_KEY }}
+          COUPANG_SECRET_KEY: ${{ secrets.COUPANG_SECRET_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          IMAGE_REPO_NAME: item_image_k
+          PYTHONPATH: pipeline-code
+        run: python pipeline-code/ci_process_upload.py ${{ steps.changed.outputs.files }}

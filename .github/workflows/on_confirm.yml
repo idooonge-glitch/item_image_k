@@ -1,0 +1,66 @@
+name: Process issue confirmation
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  process:
+    # public 저장소라 로그인한 아무나 이슈에 댓글을 달 수 있어서, 저장소 소유자
+    # 본인의 댓글에만 반응하도록 제한합니다 (안 그러면 남이 댓글로 실제 Threads
+    # 게시를 트리거할 수 있음). 봇 자신의 댓글(게시완료/재검색 안내)도 당연히 제외.
+    if: >
+      github.event.comment.user.login == 'idooonge-glitch' &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout item_image_k
+        uses: actions/checkout@v4
+
+      - name: Checkout pipeline code (private)
+        uses: actions/checkout@v4
+        with:
+          repository: idooonge-glitch/coupang-threads-images-manual
+          token: ${{ secrets.GH_PAT }}
+          path: pipeline-code
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Tesseract OCR engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+
+      - name: Download high-accuracy Korean/English tessdata
+        run: |
+          mkdir -p pipeline-code/tessdata
+          curl -sL -o pipeline-code/tessdata/kor.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/kor.traineddata
+          curl -sL -o pipeline-code/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+          curl -sL -o pipeline-code/tessdata/osd.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/osd.traineddata
+
+      - name: Install Python dependencies
+        run: pip install -r pipeline-code/requirements.txt
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Process comment
+        env:
+          COUPANG_ACCESS_KEY: ${{ secrets.COUPANG_ACCESS_KEY }}
+          COUPANG_SECRET_KEY: ${{ secrets.COUPANG_SECRET_KEY }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REPO_NAME: item_image_k
+          PYTHONPATH: pipeline-code
+        run: |
+          python pipeline-code/ci_process_confirm.py "${{ github.event.issue.number }}" "${{ github.event.comment.body }}"
